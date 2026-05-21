@@ -1,0 +1,4 @@
+__pycache__
+.vscode
+lichess_partial.pgn.zst
+.DS_Store

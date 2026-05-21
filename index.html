@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+<!-- Local chessboard stylesheet -->
+
+<link rel="stylesheet" href="/static/chessboard.css">
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+    margin-top: 40px;
+}
+</style>
+
+</head>
+
+<body>
+
+<h1>My Chess AI</h1>
+
+<div id="board" style="width: 500px; margin: auto;"></div>
+
+<!-- jQuery (required for chessboard.js) -->
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+<!-- chess.js (handles game rules) -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+<!-- Local chessboard library -->
+
+<script src="/static/chessboard.js"></script>
+
+<script>
+
+var board = null;
+var game = new Chess();
+
+function onDragStart(source, piece) {
+
+    // don't pick up pieces if game is over
+    if (game.game_over()) return false;
+
+    // only allow white pieces to move
+    if (piece.search(/^b/) !== -1) return false;
+}
+
+function onDrop(source, target) {
+
+    var move = game.move({
+        from: source,
+        to: target,
+        promotion: 'q'
+    });
+
+    // illegal move
+    if (move === null) return 'snapback';
+
+    // send move to backend
+    fetch("/move", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            move: move.from + move.to + (move.promotion || "")
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+
+        var engineMove = data.move;
+
+        game.move({
+            from: engineMove.substring(0,2),
+            to: engineMove.substring(2,4),
+            promotion: 'q'
+        });
+
+        board.position(game.fen());
+
+    });
+}
+
+var config = {
+    draggable: true,
+    position: 'start',
+    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    onDragStart: onDragStart,
+    onDrop: onDrop
+};
+
+board = Chessboard('board', config);
+
+</script>
+
+</body>
+
+</html>
