@@ -1,0 +1,12 @@
+class GameState:
+    def __init__(self, game_id):
+        self.game_id         = game_id
+        self.board           = chess.Board()
+        self.root            = None
+        self.move_count      = 0
+        self.states          = []
+        self.policy_indices  = []
+        self.policy_probs    = []
+        self.current_players = []
+        self.done            = False
+        self.result          = None
