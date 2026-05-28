@@ -1,0 +1,24 @@
+class Node:
+    def __init__(self, prior=0.0):
+        self.prior     = prior
+        self.visits    = 0
+        self.value_sum = 0.0
+        self.children  = {}
+        self.expanded  = False
+
+    def value(self):
+        if self.visits == 0:
+            return 0.0
+        return self.value_sum / self.visits
+
+    def select_child(self, c_puct=C_PUCT):
+        sqrt_v     = np.sqrt(self.visits + 1)
+        best_score = -float("inf")
+        best_move  = best_child = None
+        for move, child in self.children.items():
+            score = child.value() + c_puct * child.prior * sqrt_v / (1 + child.visits)
+            if score > best_score:
+                best_score = score
+                best_move  = move
+                best_child = child
+        return best_move, best_child
