@@ -1,0 +1,66 @@
+def setup_files(iteration):
+    for fname in ["model.py", "mcts.py"]:
+        src = f"{INPUT_DIR}/{fname}"
+        dst = f"{WORKING_DIR}/{fname}"
+        if Path(src).exists():
+            shutil.copy(src, dst)
+        else:
+            pass
+
+    Path(f"{WORKING_DIR}/src").mkdir(exist_ok=True)
+    encoder_src = f"{INPUT_DIR}/encoder.py"
+    encoder_dst = f"{WORKING_DIR}/src/encoder.py"
+    if Path(encoder_src).exists():
+        shutil.copy(encoder_src, encoder_dst)
+    else:
+        pass
+
+    if not Path(BEST_MODEL_PATH).exists():
+        src = f"{INPUT_DIR}/best_model.pt"
+        if Path(src).exists():
+            shutil.copy(src, BEST_MODEL_PATH)
+        else:
+            return False
+
+    if not Path(BUFFER_PATH).exists():
+        src = f"{INPUT_DIR}/replay_buffer.pkl"
+        if Path(src).exists():
+            shutil.copy(src, BUFFER_PATH)
+        elif iteration == 1:
+            pass
+        else:
+            pass
+
+    log_src = f"{INPUT_DIR}/iteration_log.json"
+    if Path(log_src).exists() and not Path(ITERATION_LOG).exists():
+        shutil.copy(log_src, ITERATION_LOG)
+
+    if WORKING_DIR not in sys.path:
+        sys.path.insert(0, WORKING_DIR)
+
+    return True
+
+
+def mid_run_checkpoint(replay_buffer):
+    replay_buffer.save(BUFFER_PATH)
+
+def save_outputs(iteration, promoted):
+    output_files = [
+        BUFFER_PATH,
+        f"{WORKING_DIR}/model_iter_{iteration}.pt",
+        ITERATION_LOG,
+    ]
+    if promoted:
+        output_files.append(BEST_MODEL_PATH)
+
+    for fpath in output_files:
+        if Path(fpath).exists():
+            size_mb = Path(fpath).stat().st_size / 1e6
+            name    = Path(fpath).name
+            note    = " ← upload this to your dataset next iteration" \
+                      if name in ["best_model_2.pt", "replay_buffer.pkl"] else ""
+        else:
+            pass
+
+    if not promoted:
+        pass
