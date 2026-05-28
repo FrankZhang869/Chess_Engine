@@ -1,0 +1,46 @@
+import os
+import sys
+import json
+import shutil
+import pickle
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from collections import deque
+from pathlib import Path
+import numpy as np
+import chess
+
+
+ITERATION = 1
+
+GAMES_PER_ITERATION  = 500
+PARALLEL_GAMES       = 8
+SIMULATIONS_PER_MOVE = 200
+EVAL_GAMES           = 40
+EVAL_SIMULATIONS     = 200
+PROMOTION_THRESHOLD  = 0.52
+
+TEMPERATURE_THRESHOLD = 30
+C_PUCT               = 1.5
+DIRICHLET_ALPHA      = 0.3
+DIRICHLET_WEIGHT     = 0.25
+MAX_GAME_LENGTH      = 120
+
+MULTIPV              = 5
+MAX_BUFFER_SIZE      = 50_000
+POLICY_SIZE          = 64 * 73
+
+TRAIN_EPOCHS         = 10
+TRAIN_LR             = 3e-4
+TRAIN_WEIGHT_DECAY   = 3e-4
+TRAIN_BATCH_SIZE     = 256
+
+INPUT_DIR    = "/kaggle/input/datasets/frankzhang869/chess-self-play-input"
+WORKING_DIR  = "/kaggle/working"
+
+BEST_MODEL_PATH  = f"{WORKING_DIR}/best_model.pt"
+SUPERVISED_NPZ   = f"{INPUT_DIR}/dataset.npz"
+BUFFER_PATH      = f"{WORKING_DIR}/replay_buffer.pkl"
+ITERATION_LOG    = f"{WORKING_DIR}/iteration_log.json"
