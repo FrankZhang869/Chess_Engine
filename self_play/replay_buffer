@@ -1,0 +1,32 @@
+class ReplayBuffer:
+    def __init__(self, max_size=MAX_BUFFER_SIZE):
+        self.buffer = deque(maxlen=max_size)
+
+    def __len__(self):
+        return len(self.buffer)
+
+    def add_game(self, states, policy_indices, policy_probs, values):
+        for s, pi, pp, v in zip(states, policy_indices, policy_probs, values):
+            self.buffer.append((s, pi, pp, float(v)))
+
+    def sample(self, n):
+        n     = min(n, len(self.buffer))
+        idx   = np.random.choice(len(self.buffer), size=n, replace=False)
+        batch = [self.buffer[i] for i in idx]
+        return (
+            np.stack([b[0] for b in batch]).astype(np.float32),
+            np.stack([b[1] for b in batch]).astype(np.int64),
+            np.stack([b[2] for b in batch]).astype(np.float32),
+            np.array( [b[3] for b in batch], dtype=np.float32),
+        )
+
+    def save(self, path=BUFFER_PATH):
+        with open(path, "wb") as f:
+            pickle.dump(self.buffer, f)
+
+    def load(self, path=BUFFER_PATH):
+        if Path(path).exists():
+            with open(path, "rb") as f:
+                self.buffer = pickle.load(f)
+        else:
+            pass
