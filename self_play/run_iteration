@@ -1,0 +1,30 @@
+def run_iteration(iteration):
+    from model import ChessNet2
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model = ChessNet2().to(device)
+    model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=device))
+    model.eval()
+
+    replay_buffer = ReplayBuffer()
+    replay_buffer.load()
+
+    generator    = BatchedSelfPlay(model, device)
+    game_results = generator.run_games(GAMES_PER_ITERATION, replay_buffer)
+
+    mid_run_checkpoint(replay_buffer)
+
+    new_model = ChessNet2().to(device)
+    new_model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=device))
+    metrics   = train_self_play(new_model, replay_buffer, iteration, device)
+
+    new_model_path = f"{WORKING_DIR}/model_iter_{iteration}.pt"
+    torch.save(new_model.state_dict(), new_model_path)
+
+    if promoted:
+        shutil.copy(new_model_path, BEST_MODEL_PATH)
+
+    replay_buffer.save()
+
+    save_outputs(iteration, promoted)
