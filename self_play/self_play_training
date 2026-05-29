@@ -1,0 +1,90 @@
+def get_supervised_fraction(iteration):
+    if iteration <= 3:   return 0.60
+    elif iteration <= 7: return 0.30
+    else:                return 0.10
+
+
+def policy_kl_loss(logits, soft_targets):
+    log_probs = F.log_softmax(logits, dim=1)
+    return -(soft_targets * log_probs).sum(dim=1).mean()
+
+
+def train_self_play(model, replay_buffer, iteration, device):
+    sup_frac = get_supervised_fraction(iteration)
+
+    sp_loader = sv_loader = None
+
+    if len(replay_buffer) > 0:
+        sp_s, sp_pi, sp_pp, sp_v = replay_buffer.sample(len(replay_buffer))
+        sp_loader = DataLoader(
+            SelfPlayDataset(sp_s, sp_pi, sp_pp, sp_v),
+            batch_size=TRAIN_BATCH_SIZE, shuffle=True,
+            num_workers=2, pin_memory=True
+        )
+
+    if sup_frac > 0 and Path(SUPERVISED_NPZ).exists():
+        sv_loader = DataLoader(
+            SupervisedDataset(SUPERVISED_NPZ),
+            batch_size=TRAIN_BATCH_SIZE, shuffle=True,
+            num_workers=2, pin_memory=True
+        )
+
+    optimizer     = torch.optim.Adam(
+        model.parameters(), lr=TRAIN_LR, weight_decay=TRAIN_WEIGHT_DECAY
+    )
+    value_loss_fn = nn.MSELoss()
+    model.train()
+
+    total_policy = total_value = total_loss = n_epochs = 0
+
+    for epoch in range(TRAIN_EPOCHS):
+        ep_policy = ep_value = ep_total = ep_batches = 0
+        sp_iter   = iter(sp_loader) if sp_loader else None
+        sv_iter   = iter(sv_loader) if sv_loader else None
+        n_batches = max(
+            len(sp_loader) if sp_loader else 0,
+            len(sv_loader) if sv_loader else 0
+        )
+        for _ in range(n_batches):
+            use_sv = (np.random.random() < sup_frac) and sv_iter
+            try:
+                if use_sv:
+                    states_b, policies_b, values_b = next(sv_iter)
+                elif sp_iter:
+                    states_b, policies_b, values_b = next(sp_iter)
+                elif sv_iter:
+                    states_b, policies_b, values_b = next(sv_iter)
+                else:
+                    continue
+            except StopIteration:
+                continue
+
+            states_b   = states_b.to(device)
+            policies_b = policies_b.to(device)
+            values_b   = values_b.to(device)
+
+            optimizer.zero_grad()
+            pred_policy, pred_value = model(states_b)
+            p_loss = policy_kl_loss(pred_policy, policies_b)
+            v_loss = value_loss_fn(pred_value.view(-1), values_b)
+            loss   = p_loss + v_loss
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+
+            ep_policy  += p_loss.item()
+            ep_value   += v_loss.item()
+            ep_total   += loss.item()
+            ep_batches += 1
+
+        if ep_batches > 0:
+            total_policy += ep_policy  / ep_batches
+            total_value  += ep_value   / ep_batches
+            total_loss   += ep_total   / ep_batches
+            n_epochs     += 1
+
+    return {
+        "avg_policy": total_policy / max(n_epochs, 1),
+        "avg_value":  total_value  / max(n_epochs, 1),
+        "avg_total":  total_loss   / max(n_epochs, 1),
+    }
