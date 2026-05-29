@@ -233,6 +233,17 @@ Potential future directions include:
 
 ---
 
+## Acknowledgements
+
+This project uses the open-source chessboard visualization library chessboard.js by Chris Oakman for browser-based playtesting and board rendering during development.
+
+* chessboard.js repository: https://github.com/oakmac/chessboardjs
+* Licensed under the MIT License
+
+The library was used exclusively for frontend chessboard display and interaction utilities during engine testing on a local HTML server.
+
+---
+
 ## Disclaimer
 
 This project is an independent educational and research effort inspired by the ideas introduced in AlphaZero. It is not affiliated with DeepMind, Google, Lichess, Stockfish, or Leela Chess Zero.
