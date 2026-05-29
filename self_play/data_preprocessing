@@ -1,0 +1,38 @@
+class SelfPlayDataset(Dataset):
+    def __init__(self, states, policy_indices, policy_probs, values):
+        self.states         = torch.tensor(states,         dtype=torch.float32)
+        self.policy_indices = torch.tensor(policy_indices, dtype=torch.long)
+        self.policy_probs   = torch.tensor(policy_probs,   dtype=torch.float32)
+        self.values         = torch.tensor(values,         dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.states)
+
+    def __getitem__(self, idx):
+        policy  = torch.zeros(POLICY_SIZE, dtype=torch.float32)
+        indices = self.policy_indices[idx]
+        probs   = self.policy_probs[idx]
+        mask    = indices >= 0
+        if mask.any():
+            policy.scatter_(0, indices[mask], probs[mask])
+        return self.states[idx], policy, self.values[idx]
+
+class SupervisedDataset(Dataset):
+    def __init__(self, path):
+        data                = np.load(path)
+        self.states         = torch.tensor(data["states"],         dtype=torch.float32)
+        self.policy_indices = torch.tensor(data["policy_indices"], dtype=torch.long)
+        self.policy_probs   = torch.tensor(data["policy_probs"],   dtype=torch.float32)
+        self.values         = torch.tensor(data["values"],         dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.states)
+
+    def __getitem__(self, idx):
+        policy  = torch.zeros(POLICY_SIZE, dtype=torch.float32)
+        indices = self.policy_indices[idx]
+        probs   = self.policy_probs[idx]
+        mask    = indices >= 0
+        if mask.any():
+            policy.scatter_(0, indices[mask], probs[mask])
+        return self.states[idx], policy, self.values[idx]
