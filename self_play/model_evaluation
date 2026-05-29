@@ -1,0 +1,45 @@
+def play_one_game(white_model, black_model, device):
+    from mcts import mcts_search
+    board = chess.Board()
+    while not board.is_game_over():
+        if board.fullmove_number > 150:
+            return 0
+        m = white_model if board.turn == chess.WHITE else black_model
+        move = mcts_search(board, m, device,
+                           simulations=EVAL_SIMULATIONS, temperature=0)
+        if move is None:
+            break
+        board.push(move)
+    r = board.result()
+    if r == "1-0":  return 1
+    if r == "0-1":  return -1
+    return 0
+
+
+def evaluate_models(new_path, best_path, device):
+    from model import ChessNet2
+
+    new_model  = ChessNet2().to(device)
+    best_model = ChessNet2().to(device)
+    new_model.load_state_dict(torch.load(new_path,  map_location=device))
+    best_model.load_state_dict(torch.load(best_path, map_location=device))
+    new_model.eval()
+    best_model.eval()
+
+    wins = draws = losses = 0
+    for g in range(EVAL_GAMES):
+        new_is_white = (g % 2 == 0)
+        if new_is_white:
+            r = play_one_game(new_model, best_model, device)
+            if r == 1:   wins   += 1
+            elif r == 0: draws  += 1
+            else:        losses += 1
+        else:
+            r = play_one_game(best_model, new_model, device)
+            if r == -1:  wins   += 1
+            elif r == 0: draws  += 1
+            else:        losses += 1
+
+    win_rate = (wins + 0.5 * draws) / EVAL_GAMES
+    promoted = win_rate > PROMOTION_THRESHOLD
+    return promoted, win_rate
