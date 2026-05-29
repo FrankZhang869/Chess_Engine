@@ -1,0 +1,222 @@
+class BatchedSelfPlay:
+    def __init__(self, model, device):
+        self.model  = model
+        self.device = device
+        self.model.eval()
+
+    @torch.no_grad()
+    def evaluate_batch(self, tensors_list, boards_for_perspective):
+        if not tensors_list:
+            return [], []
+        batch       = torch.from_numpy(
+            np.stack(tensors_list).astype(np.float32)
+        ).to(self.device)
+        policy_logits, values_t = self.model(batch)
+        policies_np = torch.softmax(policy_logits, dim=1).cpu().numpy()
+        values_np   = values_t.cpu().numpy().flatten()
+        policies_out, values_out = [], []
+        for i, board in enumerate(boards_for_perspective):
+            v = float(values_np[i])
+            if board.turn == chess.BLACK:
+                v = -v
+            policies_out.append(policies_np[i])
+            values_out.append(v)
+        return policies_out, values_out
+
+    def expand_node(self, node, board, policy):
+        from src.encoder import move_to_index
+        legal_moves = list(board.legal_moves)
+        if not legal_moves:
+            node.expanded = True
+            return
+        valid_moves, priors = [], []
+        for move in legal_moves:
+            idx = move_to_index(move, board)
+            if idx is None:
+                continue
+            valid_moves.append(move)
+            priors.append(policy[idx])
+        if not valid_moves:
+            node.expanded = True
+            return
+        priors = np.array(priors, dtype=np.float32)
+        priors /= (priors.sum() + 1e-8)
+        for move, prior in zip(valid_moves, priors):
+            node.children[move] = Node(prior=float(prior))
+        node.expanded = True
+
+    def add_dirichlet_noise(self, node):
+        if not node.children:
+            return
+        moves = list(node.children.keys())
+        noise = np.random.dirichlet([DIRICHLET_ALPHA] * len(moves))
+        for move, n in zip(moves, noise):
+            node.children[move].prior = (
+                (1 - DIRICHLET_WEIGHT) * node.children[move].prior
+                + DIRICHLET_WEIGHT * n
+            )
+
+    def select_leaf(self, node, board):
+        from src.encoder import fen_to_tensor
+        path, current, current_board = [], node, board.copy()
+        while (current.expanded
+               and current.children
+               and not current_board.is_game_over()):
+            move, child = current.select_child()
+            path.append((current, move))
+            current_board.push(move)
+            current = child
+        leaf_tensor = fen_to_tensor(current_board.fen())
+        return current, current_board, leaf_tensor, path
+
+    def backpropagate(self, path, leaf_node, value):
+        leaf_node.visits    += 1
+        leaf_node.value_sum += value
+        value = -value
+        for node, move in reversed(path):
+            child            = node.children[move]
+            child.visits    += 1
+            child.value_sum += value
+            value            = -value
+
+    def get_sparse_policy(self, root, board):
+        from src.encoder import move_to_index
+        indices = np.full(MULTIPV, -1,  dtype=np.int16)
+        probs   = np.zeros(MULTIPV,     dtype=np.float32)
+        if not root.children:
+            return indices, probs
+        moves      = list(root.children.keys())
+        visits     = np.array([root.children[m].visits for m in moves],
+                              dtype=np.float32)
+        total      = visits.sum()
+        if total == 0:
+            return indices, probs
+        probs_full = visits / total
+        top_k      = min(MULTIPV, len(moves))
+        top_idx    = np.argsort(probs_full)[::-1][:top_k]
+        for j, i in enumerate(top_idx):
+            idx = move_to_index(moves[i], board)
+            if idx is not None:
+                indices[j] = idx
+                probs[j]   = probs_full[i]
+        return indices, probs
+
+    def select_move(self, root, move_number):
+        moves  = list(root.children.keys())
+        visits = np.array([root.children[m].visits for m in moves],
+                          dtype=np.float32)
+        if move_number > TEMPERATURE_THRESHOLD or visits.sum() == 0:
+            return moves[np.argmax(visits)]
+        probs = visits / visits.sum()
+        return moves[np.random.choice(len(moves), p=probs)]
+
+    def run_games(self, num_games, replay_buffer):
+        from src.encoder import fen_to_tensor
+        results    = {"white_wins": 0, "black_wins": 0,
+                      "draws": 0, "total_moves": 0}
+        games_done = 0
+        batch_num  = 0
+
+        while games_done < num_games:
+            batch_size  = min(PARALLEL_GAMES, num_games - games_done)
+            game_states = [GameState(games_done + i) for i in range(batch_size)]
+            batch_num  += 1
+
+            root_tensors = [fen_to_tensor(gs.board.fen()) for gs in game_states]
+            root_boards  = [gs.board for gs in game_states]
+            policies, values = self.evaluate_batch(root_tensors, root_boards)
+
+            for gs, policy, value in zip(game_states, policies, values):
+                gs.root = Node()
+                self.expand_node(gs.root, gs.board, policy)
+                self.add_dirichlet_noise(gs.root)
+                self.backpropagate([], gs.root, value)
+
+            while any(not gs.done for gs in game_states):
+                active = [gs for gs in game_states if not gs.done]
+
+                for _ in range(SIMULATIONS_PER_MOVE):
+                    pending_tensors = []
+                    pending_boards  = []
+                    pending_leaves  = []
+                    pending_paths   = []
+
+                    for gs in active:
+                        leaf, leaf_board, leaf_tensor, path = self.select_leaf(
+                            gs.root, gs.board
+                        )
+                        if leaf_board.is_game_over():
+                            val = -1.0 if leaf_board.is_checkmate() else 0.0
+                            self.backpropagate(path, leaf, val)
+                        elif not leaf.expanded:
+                            pending_tensors.append(leaf_tensor)
+                            pending_boards.append(leaf_board)
+                            pending_leaves.append(leaf)
+                            pending_paths.append(path)
+                        else:
+                            self.backpropagate(path, leaf, 0.0)
+
+                    if pending_tensors:
+                        policies, values = self.evaluate_batch(
+                            pending_tensors, pending_boards
+                        )
+                        for lb, leaf, path, policy, value in zip(
+                            pending_boards, pending_leaves,
+                            pending_paths, policies, values
+                        ):
+                            self.expand_node(leaf, lb, policy)
+                            self.backpropagate(path, leaf, value)
+
+                for gs in active:
+                    if gs.board.is_game_over():
+                        gs.done   = True
+                        gs.result = gs.board.result()
+                        continue
+
+                    state          = fen_to_tensor(gs.board.fen())
+                    indices, probs = self.get_sparse_policy(gs.root, gs.board)
+                    gs.states.append(state)
+                    gs.policy_indices.append(indices)
+                    gs.policy_probs.append(probs)
+                    gs.current_players.append(gs.board.turn)
+
+                    move = self.select_move(gs.root, gs.move_count)
+                    gs.board.push(move)
+                    gs.move_count += 1
+
+                    if gs.board.is_game_over() or gs.move_count >= MAX_GAME_LENGTH:
+                        gs.done   = True
+                        gs.result = (gs.board.result()
+                                     if gs.board.is_game_over() else "1/2-1/2")
+                        continue
+
+                    if move in gs.root.children:
+                        gs.root = gs.root.children[move]
+                    else:
+                        gs.root = Node()
+                        t       = fen_to_tensor(gs.board.fen())
+                        p, v    = self.evaluate_batch([t], [gs.board])
+                        self.expand_node(gs.root, gs.board, p[0])
+                        self.backpropagate([], gs.root, v[0])
+                    self.add_dirichlet_noise(gs.root)
+
+            for gs in game_states:
+                if gs.result == "1-0":
+                    outcome = 1.0;  results["white_wins"] += 1
+                elif gs.result == "0-1":
+                    outcome = -1.0; results["black_wins"] += 1
+                else:
+                    outcome = 0.0;  results["draws"] += 1
+                results["total_moves"] += gs.move_count
+                values_assigned = [
+                    outcome if p == chess.WHITE else -outcome
+                    for p in gs.current_players
+                ]
+                replay_buffer.add_game(
+                    gs.states, gs.policy_indices,
+                    gs.policy_probs, values_assigned
+                )
+                games_done += 1
+
+        avg = results["total_moves"] / num_games
+        return results
